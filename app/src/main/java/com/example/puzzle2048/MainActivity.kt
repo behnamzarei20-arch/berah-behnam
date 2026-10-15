@@ -19,11 +19,11 @@ class MainActivity : Activity() {
         window.navigationBarColor = Color.rgb(250, 248, 239)
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
             View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
-        setContentView(PuzzleView())
+        setContentView(PuzzleView(this))
     }
 }
 
-private class PuzzleView : View {
+private class PuzzleView(context: android.content.Context) : View(context) {
     private val background = Color.rgb(250, 248, 239)
     private val boardColor = Color.rgb(187, 173, 160)
     private val emptyColor = Color.rgb(205, 193, 180)
