@@ -8,216 +8,225 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.view.MotionEvent
 import android.view.View
-import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
 import kotlin.math.min
-import kotlin.random.Random
 
 class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.statusBarColor = Color.rgb(250, 248, 239)
-        window.navigationBarColor = Color.rgb(250, 248, 239)
-        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
-            View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
-        setContentView(PuzzleView(this))
+        window.statusBarColor = Color.rgb(246, 250, 235)
+        window.navigationBarColor = Color.rgb(246, 250, 235)
+        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        setContentView(GardenWordView(this))
     }
 }
 
-private class PuzzleView(context: android.content.Context) : View(context) {
-    private val background = Color.rgb(250, 248, 239)
-    private val boardColor = Color.rgb(187, 173, 160)
-    private val emptyColor = Color.rgb(205, 193, 180)
-    private val ink = Color.rgb(70, 62, 53)
+private data class WordLevel(val letters: List<String>, val words: List<String>)
+
+private class GardenWordView(context: android.content.Context) : View(context) {
+    private val levels = listOf(
+        WordLevel(listOf("ب", "ا", "غ", "گ", "ل", "ر", "ا"), listOf("باغ", "گل", "برگ", "بار", "گلاب")),
+        WordLevel(listOf("ب", "ه", "ا", "ر", "ن", "و", "گ"), listOf("بهار", "نور", "هوا", "راه", "نگار")),
+        WordLevel(listOf("گ", "ل", "س", "ت", "ا", "ن", "ب"), listOf("گل", "سنگ", "گلستان", "لب", "بست")),
+        WordLevel(listOf("د", "ر", "خ", "ت", "ا", "ن", "ب"), listOf("درخت", "تند", "بار", "نرد", "تب")),
+        WordLevel(listOf("ش", "ک", "و", "ف", "ه", "ا", "ر"), listOf("شکوفه", "هوا", "راه", "کار", "شکر"))
+    )
+    private val bg = Color.rgb(246, 250, 235)
+    private val green = Color.rgb(58, 112, 70)
+    private val dark = Color.rgb(55, 76, 53)
     private val white = Color.WHITE
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val board = Array(4) { IntArray(4) }
+    private var levelIndex = 0
     private var score = 0
-    private var best = 0
-    private var gameOver = false
-    private var downX = 0f
-    private var downY = 0f
-    private var boardRect = RectF()
-    private var restartRect = RectF()
-
-    init {
-        isFocusable = true
-        addRandomTile()
-        addRandomTile()
-    }
+    private var hints = 3
+    private var selected = ""
+    private val found = mutableSetOf<String>()
+    private var letterCenters = mutableListOf<Pair<Float, Float>>()
+    private var submitRect = RectF()
+    private var clearRect = RectF()
+    private var hintRect = RectF()
+    private var nextRect = RectF()
+    private var message = "حروف را انتخاب کن و کلمه بساز"
+    private var messageUntil = 0L
+    private val level: WordLevel get() = levels[levelIndex]
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        canvas.drawColor(background)
-
+        canvas.drawColor(bg)
         val w = width.toFloat()
         val h = height.toFloat()
-        drawText(canvas, "۲۰۴۸", w / 2f, h * 0.105f, min(w * 0.15f, 68f), ink, true)
-        drawText(canvas, "بازی معمایی اعداد", w / 2f, h * 0.155f, 20f, ink, true)
+        drawGarden(canvas, w, h)
+        text(canvas, "باغ واژه", w / 2f, h * .075f, min(w * .105f, 52f), green, true)
+        text(canvas, "باغی پر از کلمه‌های قشنگ", w / 2f, h * .112f, 15f, dark, false)
+        val margin = w * .055f
+        val cardTop = h * .135f
+        val cardH = h * .075f
+        val cardGap = 10f
+        val cardW = (w - 2 * margin - cardGap * 2) / 3f
+        infoCard(canvas, RectF(margin, cardTop, margin + cardW, cardTop + cardH), "مرحله", (levelIndex + 1).toString())
+        infoCard(canvas, RectF(margin + cardW + cardGap, cardTop, margin + 2 * cardW + cardGap, cardTop + cardH), "امتیاز", score.toString())
+        infoCard(canvas, RectF(margin + 2 * (cardW + cardGap), cardTop, w - margin, cardTop + cardH), "راهنما", hints.toString())
+        text(canvas, "کلمه‌های باغ را پیدا کن", w / 2f, h * .255f, 20f, green, true)
 
-        val sideMargin = 22f
-        val gap = 12f
-        val cardTop = h * 0.19f
-        val cardHeight = 62f
-        val cardWidth = (w - sideMargin * 2f - gap) / 2f
-        drawCard(canvas, RectF(sideMargin, cardTop, sideMargin + cardWidth, cardTop + cardHeight), "امتیاز", score.toString())
-        drawCard(canvas, RectF(sideMargin + cardWidth + gap, cardTop, w - sideMargin, cardTop + cardHeight), "بهترین", best.toString())
+        val gridTop = h * .28f
+        val slotH = min(43f, h * .057f)
+        val slotGap = 9f
+        val slotW = (w - 2 * margin - 12f) / 2f
+        level.words.forEachIndexed { index, word ->
+            val row = index / 2
+            val col = index % 2
+            val left = if (col == 0) margin else margin + slotW + 12f
+            val top = gridTop + row * (slotH + slotGap)
+            val rect = RectF(left, top, left + slotW, top + slotH)
+            paint.color = if (word in found) Color.rgb(199, 226, 183) else white
+            canvas.drawRoundRect(rect, 13f, 13f, paint)
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 1.5f
+            paint.color = if (word in found) green else Color.rgb(198, 218, 187)
+            canvas.drawRoundRect(rect, 13f, 13f, paint)
+            paint.style = Paint.Style.FILL
+            text(canvas, if (word in found) "✓  $word" else "•••", rect.centerX(), rect.centerY() + 7f, 21f, if (word in found) green else Color.rgb(163, 188, 150), true)
+        }
 
-        val buttonWidth = 150f
-        restartRect = RectF(w - sideMargin - buttonWidth, h * 0.285f, w - sideMargin, h * 0.285f + 44f)
-        paint.color = Color.rgb(143, 122, 102)
-        canvas.drawRoundRect(restartRect, 8f, 8f, paint)
-        drawText(canvas, "شروع دوباره", restartRect.centerX(), restartRect.centerY() + 6f, 16f, white, true)
-        drawText(canvas, "خانه‌های هم‌عدد را با کشیدن انگشت ادغام کن", w / 2f, h * 0.345f, 14f, ink, false)
+        val ringY = h * .70f
+        val ringX = w / 2f
+        val radius = min(w * .285f, h * .13f)
+        paint.color = Color.rgb(224, 238, 205)
+        canvas.drawCircle(ringX, ringY, radius + 14f, paint)
+        paint.color = Color.rgb(193, 220, 171)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 2f
+        canvas.drawCircle(ringX, ringY, radius + 4f, paint)
+        paint.style = Paint.Style.FILL
+        letterCenters = mutableListOf()
+        level.letters.forEachIndexed { i, letter ->
+            val angle = (-90.0 + i * 360.0 / level.letters.size) * Math.PI / 180.0
+            val cx = ringX + cos(angle).toFloat() * radius
+            val cy = ringY + sin(angle).toFloat() * radius
+            letterCenters.add(cx to cy)
+            paint.color = white
+            canvas.drawCircle(cx, cy, 23f, paint)
+            paint.color = if (selected.contains(letter)) Color.rgb(232, 177, 65) else green
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 2f
+            canvas.drawCircle(cx, cy, 23f, paint)
+            paint.style = Paint.Style.FILL
+            text(canvas, letter, cx, cy + 8f, 25f, dark, true)
+        }
 
-        val boardSize = min(w - 2f * sideMargin, h * 0.52f)
-        val left = (w - boardSize) / 2f
-        val top = h * 0.385f
-        boardRect = RectF(left, top, left + boardSize, top + boardSize)
-        paint.color = boardColor
-        canvas.drawRoundRect(boardRect, 10f, 10f, paint)
+        val selectedRect = RectF(margin, h * .565f, w - margin, h * .615f)
+        paint.color = white
+        canvas.drawRoundRect(selectedRect, 15f, 15f, paint)
+        text(canvas, if (selected.isEmpty()) "حروف را لمس کن" else selected, w / 2f, selectedRect.centerY() + 8f, 25f, green, true)
+        val btnY = h * .865f
+        val btnH = min(50f, h * .07f)
+        val btnGap = 9f
+        val btnW = (w - 2 * margin - 2 * btnGap) / 3f
+        submitRect = RectF(margin, btnY, margin + btnW, btnY + btnH)
+        clearRect = RectF(margin + btnW + btnGap, btnY, margin + 2 * btnW + btnGap, btnY + btnH)
+        hintRect = RectF(margin + 2 * (btnW + btnGap), btnY, w - margin, btnY + btnH)
+        button(canvas, submitRect, "ثبت کلمه", green)
+        button(canvas, clearRect, "پاک کردن", Color.rgb(127, 158, 109))
+        button(canvas, hintRect, "راهنما", Color.rgb(211, 157, 57))
+        if (found.containsAll(level.words)) {
+            nextRect = RectF(w * .25f, h * .79f, w * .75f, h * .85f)
+            button(canvas, nextRect, if (levelIndex == levels.lastIndex) "باغ تمام شد! دوباره" else "باغ بعدی  ←", Color.rgb(213, 139, 79))
+        } else nextRect = RectF()
+        if (System.currentTimeMillis() < messageUntil) {
+            paint.color = Color.rgb(255, 248, 214)
+            canvas.drawRoundRect(RectF(margin, h * .225f, w - margin, h * .265f), 12f, 12f, paint)
+            text(canvas, message, w / 2f, h * .252f, 14f, dark, true)
+            postInvalidateDelayed(300)
+        }
+    }
 
-        val cellGap = boardSize * 0.025f
-        val cellSize = (boardSize - cellGap * 5f) / 4f
-        for (r in 0..3) {
-            for (c in 0..3) {
-                val x = left + cellGap + c * (cellSize + cellGap)
-                val y = top + cellGap + r * (cellSize + cellGap)
-                val value = board[r][c]
-                paint.color = tileColor(value)
-                canvas.drawRoundRect(RectF(x, y, x + cellSize, y + cellSize), 7f, 7f, paint)
-                if (value != 0) {
-                    val textColor = if (value <= 4) ink else Color.WHITE
-                    val textSize = if (value >= 1024) cellSize * 0.27f else cellSize * 0.34f
-                    drawText(canvas, value.toString(), x + cellSize / 2f, y + cellSize / 2f + textSize * 0.34f, textSize, textColor, true)
-                }
+    private fun drawGarden(canvas: Canvas, w: Float, h: Float) {
+        val points = listOf(18f to h * .18f, w - 18f to h * .23f, 22f to h * .83f, w - 20f to h * .81f)
+        points.forEachIndexed { idx, p ->
+            val colors = listOf(Color.rgb(239, 143, 172), Color.rgb(232, 177, 65), Color.rgb(171, 154, 219), Color.rgb(245, 190, 105))
+            for (i in 0..5) {
+                val a = i * Math.PI / 3.0
+                paint.color = colors[idx]
+                canvas.drawCircle(p.first + cos(a).toFloat() * 5f, p.second + sin(a).toFloat() * 5f, 4f, paint)
             }
+            paint.color = Color.rgb(232, 177, 65)
+            canvas.drawCircle(p.first, p.second, 3f, paint)
         }
-
-        if (gameOver) {
-            paint.color = Color.argb(185, 250, 248, 239)
-            canvas.drawRoundRect(boardRect, 10f, 10f, paint)
-            drawText(canvas, "پایان بازی!", boardRect.centerX(), boardRect.centerY() - 10f, 30f, ink, true)
-            drawText(canvas, "برای تلاش دوباره دکمه را بزن", boardRect.centerX(), boardRect.centerY() + 28f, 15f, ink, false)
-        }
+        paint.color = Color.rgb(224, 239, 209)
+        canvas.drawOval(RectF(-w * .15f, h * .92f, w * .55f, h * 1.04f), paint)
+        canvas.drawOval(RectF(w * .5f, h * .94f, w * 1.15f, h * 1.05f), paint)
     }
 
-    private fun drawCard(canvas: Canvas, rect: RectF, label: String, value: String) {
-        paint.color = Color.rgb(187, 173, 160)
-        canvas.drawRoundRect(rect, 8f, 8f, paint)
-        drawText(canvas, label, rect.centerX(), rect.top + 21f, 13f, white, true)
-        drawText(canvas, value, rect.centerX(), rect.top + 48f, 21f, white, true)
+    private fun infoCard(canvas: Canvas, rect: RectF, label: String, value: String) {
+        paint.color = white
+        canvas.drawRoundRect(rect, 13f, 13f, paint)
+        text(canvas, label, rect.centerX(), rect.top + rect.height() * .36f, 13f, Color.rgb(107, 137, 93), false)
+        text(canvas, value, rect.centerX(), rect.top + rect.height() * .78f, 20f, green, true)
     }
 
-    private fun drawText(canvas: Canvas, text: String, x: Float, baseline: Float, size: Float, color: Int, bold: Boolean) {
+    private fun button(canvas: Canvas, rect: RectF, label: String, color: Int) {
+        paint.color = color
+        canvas.drawRoundRect(rect, 15f, 15f, paint)
+        text(canvas, label, rect.centerX(), rect.centerY() + 6f, 15f, white, true)
+    }
+
+    private fun text(canvas: Canvas, value: String, x: Float, baseline: Float, size: Float, color: Int, bold: Boolean) {
         paint.color = color
         paint.textSize = size
         paint.textAlign = Paint.Align.CENTER
-        paint.typeface = if (bold) android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD)
-            else android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.NORMAL)
-        canvas.drawText(text, x, baseline, paint)
-    }
-
-    private fun tileColor(value: Int): Int = when (value) {
-        0 -> emptyColor
-        2 -> Color.rgb(238, 228, 218)
-        4 -> Color.rgb(237, 224, 200)
-        8 -> Color.rgb(242, 177, 121)
-        16 -> Color.rgb(245, 149, 99)
-        32 -> Color.rgb(246, 124, 95)
-        64 -> Color.rgb(246, 94, 59)
-        128 -> Color.rgb(237, 207, 114)
-        256 -> Color.rgb(237, 204, 97)
-        512 -> Color.rgb(237, 200, 80)
-        1024 -> Color.rgb(237, 197, 63)
-        else -> Color.rgb(237, 194, 46)
+        paint.typeface = android.graphics.Typeface.create("sans-serif", if (bold) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+        canvas.drawText(value, x, baseline, paint)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        when (event.action) {
-            MotionEvent.ACTION_DOWN -> {
-                downX = event.x
-                downY = event.y
-                return true
-            }
-            MotionEvent.ACTION_UP -> {
-                val dx = event.x - downX
-                val dy = event.y - downY
-                if (restartRect.contains(event.x, event.y)) {
-                    resetGame()
-                } else if (abs(dx) > 28f || abs(dy) > 28f) {
-                    if (!gameOver) {
-                        if (abs(dx) > abs(dy)) move(if (dx < 0) -1 else 1, 0)
-                        else move(0, if (dy < 0) -1 else 1)
-                    }
+        if (event.action == MotionEvent.ACTION_DOWN) return true
+        if (event.action == MotionEvent.ACTION_UP) {
+            val x = event.x
+            val y = event.y
+            when {
+                submitRect.contains(x, y) -> submitWord()
+                clearRect.contains(x, y) -> { selected = ""; message = "حروف پاک شد"; showMessage() }
+                hintRect.contains(x, y) -> useHint()
+                nextRect.contains(x, y) && nextRect.width() > 0f && found.containsAll(level.words) -> {
+                    if (levelIndex == levels.lastIndex) { levelIndex = 0; score = 0; hints = 3 } else levelIndex++
+                    found.clear()
+                    selected = ""
+                    message = "به باغ تازه خوش آمدی!"
+                    showMessage()
                 }
-                return true
+                else -> {
+                    val hit = letterCenters.indexOfFirst { (cx, cy) -> (x - cx) * (x - cx) + (y - cy) * (y - cy) < 55f * 55f }
+                    if (hit >= 0) { selected += level.letters[hit]; messageUntil = 0L }
+                    else if (y < height * .56f) selected = ""
+                }
             }
+            invalidate()
+            return true
         }
         return true
     }
 
-    private fun resetGame() {
-        for (r in 0..3) for (c in 0..3) board[r][c] = 0
-        score = 0
-        gameOver = false
-        addRandomTile()
-        addRandomTile()
-        invalidate()
-    }
-
-    private fun addRandomTile() {
-        val empty = mutableListOf<Pair<Int, Int>>()
-        for (r in 0..3) for (c in 0..3) if (board[r][c] == 0) empty.add(r to c)
-        if (empty.isEmpty()) return
-        val (r, c) = empty[Random.nextInt(empty.size)]
-        board[r][c] = if (Random.nextInt(10) == 0) 4 else 2
-    }
-
-    private fun move(dx: Int, dy: Int) {
-        var changed = false
-        for (lineIndex in 0..3) {
-            val coords = (0..3).map { step ->
-                when {
-                    dx < 0 -> lineIndex to step
-                    dx > 0 -> lineIndex to (3 - step)
-                    dy < 0 -> step to lineIndex
-                    else -> (3 - step) to lineIndex
-                }
-            }
-            val original = coords.map { (r, c) -> board[r][c] }.toIntArray()
-            val compact = original.filter { it != 0 }.toMutableList()
-            val merged = mutableListOf<Int>()
-            var i = 0
-            while (i < compact.size) {
-                if (i + 1 < compact.size && compact[i] == compact[i + 1]) {
-                    val value = compact[i] * 2
-                    merged.add(value)
-                    score += value
-                    best = maxOf(best, score)
-                    i += 2
-                } else {
-                    merged.add(compact[i])
-                    i++
-                }
-            }
-            while (merged.size < 4) merged.add(0)
-            for (index in coords.indices) {
-                val (r, c) = coords[index]
-                if (board[r][c] != merged[index]) changed = true
-                board[r][c] = merged[index]
-            }
+    private fun submitWord() {
+        val candidate = selected
+        when {
+            candidate.isEmpty() -> message = "اول چند حرف انتخاب کن"
+            candidate in level.words && found.add(candidate) -> { score += candidate.length * 10; message = "آفرین! کلمه پیدا شد"; selected = "" }
+            candidate in found -> { message = "این کلمه را قبلاً پیدا کردی"; selected = "" }
+            else -> { message = "این کلمه در باغ نیست؛ دوباره تلاش کن"; selected = "" }
         }
-        if (changed) addRandomTile()
-        gameOver = !hasMoves()
-        invalidate()
+        showMessage()
     }
 
-    private fun hasMoves(): Boolean {
-        for (r in 0..3) for (c in 0..3) {
-            if (board[r][c] == 0) return true
-            if (r < 3 && board[r][c] == board[r + 1][c]) return true
-            if (c < 3 && board[r][c] == board[r][c + 1]) return true
+    private fun useHint() {
+        val missing = level.words.firstOrNull { it !in found }
+        when {
+            missing == null -> message = "همه کلمه‌ها پیدا شده‌اند!"
+            hints <= 0 -> message = "راهنمای رایگان تمام شده"
+            else -> { hints--; found.add(missing); score += missing.length * 5; message = "راهنما: «$missing» پیدا شد" }
         }
-        return false
+        showMessage()
     }
+
+    private fun showMessage() { messageUntil = System.currentTimeMillis() + 2200 }
 }
